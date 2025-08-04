@@ -21,6 +21,7 @@ from utils.AverageMeter import AverageMeter
 from utils.camutils import cams_to_affinity_label
 from utils.optimizer import PolyWarmupAdamW
 from WeCLIP_model.model_attn_aff_voc import WeCLIP
+from loralib.utils import save_lora
 
 
 parser = argparse.ArgumentParser()
@@ -28,7 +29,9 @@ parser.add_argument("--config",
                     default='/your/path/WeCLIP/configs/voc_attn_reg.yaml',
                     type=str,
                     help="config")
-parser.add_argument("--seg_detach", action="store_true", help="detach seg")
+#parser.add_argument("--seg_detach", action="store_true", help="detach seg")
+###for LoRA training (step1) and decoder training with frozen clip+lora###
+#parser.add_argument("--phase", choices=['lora', 'seg'], default="lora")
 parser.add_argument("--work_dir", default=None, type=str, help="work_dir")
 parser.add_argument("--radius", default=8, type=int, help="radius")
 parser.add_argument("--crop_size", default=320, type=int, help="crop_size")
@@ -196,6 +199,8 @@ def train(cfg):
     mask_size = int(cfg.dataset.crop_size // 16)
     attn_mask = get_mask_by_radius(h=mask_size, w=mask_size, radius=args.radius)
     writer = SummaryWriter(cfg.work_dir.tb_logger_dir)
+    lora_save_dir = os.path.join(cfg.work_dir.ckpt_dir, "lora_weights")
+    os.makedirs(lora_save_dir, exist_ok=True)
 
     optimizer = PolyWarmupAdamW(
         params=[
@@ -287,6 +292,11 @@ def train(cfg):
             logging.info('Validating...')
             if (n_iter + 1) > 26000:
                 torch.save(WeCLIP_model.state_dict(), ckpt_name)
+                # save lora weights as well
+                lora_ckpt_name = os.path.join(lora_save_dir, f"lora_iter_{n_iter+1}.pt")
+                save_lora(WeCLIP_model.encoder, lora_ckpt_name)
+                logging.info(f"Saved LoRA weights to: {lora_ckpt_name}")
+
             seg_score, cam_score = validate(model=WeCLIP_model, data_loader=val_loader, cfg=cfg)
             logging.info("cams score:")
             logging.info(cam_score)

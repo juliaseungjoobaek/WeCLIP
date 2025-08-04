@@ -56,6 +56,9 @@ def _refine_cams(ref_mod, images, cams, valid_key):
 
     return refined_label.squeeze(0)
 
+### add LoRA ###
+from loralib.utils import mark_only_lora_as_trainable, get_lora_parameters
+
 
 class WeCLIP(nn.Module):
     def __init__(self, num_classes=None, clip_model=None, embedding_dim=256, in_channels=512, dataset_root_path=None, device='cuda'):
@@ -65,13 +68,18 @@ class WeCLIP(nn.Module):
 
         self.encoder, _ = clip.load(clip_model, device=device)
 
+        '''
         for name, param in self.encoder.named_parameters():
             if "11" not in name:
                 param.requires_grad=False
+        '''
+        ### for LoRA training ###
+        mark_only_lora_as_trainable(self.encoder)
 
         for name, param in self.encoder.named_parameters():
             print(name, param.requires_grad)
-
+        # check if lora is applied
+    
         self.in_channels = in_channels
 
         self.decoder_fts_fuse = SegFormerHead(in_channels=self.in_channels,embedding_dim=self.embedding_dim,
@@ -85,7 +93,8 @@ class WeCLIP(nn.Module):
         self.grad_cam = GradCAM(model=self.encoder, target_layers=self.target_layers, reshape_transform=reshape_transform)
         self.root_path = os.path.join(dataset_root_path, 'SegmentationClassAug')
         self.cam_bg_thres = 1
-        self.encoder.eval()
+        #self.encoder.eval()
+        self.encoder.train()
         self.par = PAR(num_iter=20, dilations=[1,2,4,8,12,24]).cuda()
         self.iter_num = 0
         self.require_all_fts = True
@@ -100,9 +109,12 @@ class WeCLIP(nn.Module):
         for param in list(self.decoder_fts_fuse.parameters()):
             param_groups[3].append(param)
 
+        ### add LoRA ###
+        lora_params = get_lora_parameters(self.encoder)
+        param_groups[0].extend(lora_params)
+
         return param_groups
     
-
 
     def forward(self, img, img_names='2007_000032', mode='train'):
         cam_list = []
